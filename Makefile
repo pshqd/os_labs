@@ -86,8 +86,6 @@ test4: all
 	    test_inputs/file3.txt \
 	    outdir/ K
 
-# Проверяем шифрование: зашифровать и расшифровать = оригинал
-# ← changed: добавили --mode=sequential (1 файл → sequential логично)
 test_roundtrip: all
 	mkdir -p test_inputs roundtrip_out
 	echo "Hello roundtrip" > test_inputs/roundtrip.txt
@@ -96,4 +94,13 @@ test_roundtrip: all
 	diff test_inputs/roundtrip.txt roundtrip_out/roundtrip.txt \
 		&& echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
 
-.PHONY: all clean test test4 test_roundtrip   # ← changed: добавили test4
+test5: all test_segfault
+	@echo "=== [lab5] normal encryption with secure key ==="
+	@mkdir -p test_out5
+	@echo "secret data" > /tmp/t5.txt
+	./secure_copy --mode=sequential /tmp/t5.txt test_out5/ K
+	@echo ""
+	@echo "=== [lab5] SIGSEGV/SIGBUS demo (expect security message + exit 42) ==="
+	./test_segfault; echo "Exit code: $$?"
+
+.PHONY: all clean test test4 test_roundtrip test5
