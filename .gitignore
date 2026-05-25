@@ -17,3 +17,6 @@ log.txt
 # IDE
 .vscode/
 .idea/
+test_segfault
+secure_copy
+test_out5/
