@@ -23,6 +23,7 @@ clean:
 	rm -f log.txt
 	rm -rf outdir/
 	rm -rf test_inputs/
+	rm -rf test_out5/ 
 
 # Создаём 5 тестовых файлов и запускаем программу
 # ← changed: добавили --mode=parallel, исправили i=1→i=2 в аргументах
@@ -101,6 +102,6 @@ test5: all test_segfault
 	./secure_copy --mode=sequential /tmp/t5.txt test_out5/ K
 	@echo ""
 	@echo "=== [lab5] SIGSEGV/SIGBUS demo (expect security message + exit 42) ==="
-	./test_segfault; echo "Exit code: $$?"
+	./tests_scripts/test_segfault; echo "Exit code: $$?"
 
 .PHONY: all clean test test4 test_roundtrip test5
