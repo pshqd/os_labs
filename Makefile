@@ -26,6 +26,8 @@ clean:
 	@rm -rf test_out5/ 
 	@rm -f disk.img got_root.txt
 	@rm -rf test_lab6/
+	@rm -rf test_segfault
+
 
 # Создаём 5 тестовых файлов и запускаем программу
 # ← changed: добавили --mode=parallel, исправили i=1→i=2 в аргументах
@@ -104,10 +106,10 @@ test5: all test_segfault
 	@echo "=== [lab5] normal encryption with secure key ==="
 	@mkdir -p test_out5
 	@echo "secret data" > /tmp/t5.txt
-	./secure_copy --mode=sequential /tmp/t5.txt test_out5/ K
+	./secure_copy -add -key "K" -image test_out5/t5.img /tmp/t5.txt
 	@echo ""
 	@echo "=== [lab5] SIGSEGV/SIGBUS demo (expect security message + exit 42) ==="
-	./tests_scripts/test_segfault; echo "Exit code: $$?"
+	./test_segfault; echo "Exit code: $$?"
 
 
 
@@ -132,4 +134,4 @@ test6: all
 	diff test_lab6/root.txt got_root.txt && echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
 
 
-.PHONY: all clean test test4 test_roundtrip test5 test6
+.PHONY: all clean test test4 test_roundtrip test5 test6 test_segfault
