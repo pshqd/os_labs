@@ -20,3 +20,6 @@ log.txt
 test_segfault
 secure_copy
 test_out5/
+test_lab6/
+*.img
+*.txt

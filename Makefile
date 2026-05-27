@@ -19,15 +19,17 @@ $(TARGET): $(SRCS)
 	$(CXX) $(CXXFLAGS) $(SRCS) -o $(TARGET) $(LDFLAGS)
 
 clean:
-	rm -f $(TARGET)
-	rm -f log.txt
-	rm -rf outdir/
-	rm -rf test_inputs/
-	rm -rf test_out5/ 
+	@rm -f $(TARGET)
+	@rm -f log.txt
+	@rm -rf outdir/
+	@rm -rf test_inputs/
+	@rm -rf test_out5/ 
+	@rm -f disk.img got_root.txt
+	@rm -rf test_lab6/
 
 # Создаём 5 тестовых файлов и запускаем программу
 # ← changed: добавили --mode=parallel, исправили i=1→i=2 в аргументах
-test: all
+test3: all
 	mkdir -p test_inputs
 	echo "File one content"   > test_inputs/file1.txt
 	echo "File two content"   > test_inputs/file2.txt
@@ -95,6 +97,9 @@ test_roundtrip: all
 	diff test_inputs/roundtrip.txt roundtrip_out/roundtrip.txt \
 		&& echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
 
+test_segfault: tests_scripts/test_segfault.cpp
+	$(CXX) $(CXXFLAGS) tests_scripts/test_segfault.cpp -o test_segfault $(LDFLAGS)
+
 test5: all test_segfault
 	@echo "=== [lab5] normal encryption with secure key ==="
 	@mkdir -p test_out5
@@ -104,4 +109,27 @@ test5: all test_segfault
 	@echo "=== [lab5] SIGSEGV/SIGBUS demo (expect security message + exit 42) ==="
 	./tests_scripts/test_segfault; echo "Exit code: $$?"
 
-.PHONY: all clean test test4 test_roundtrip test5
+
+
+test6: all
+	@echo "=== [lab6] create image and add files ==="
+	@mkdir -p test_lab6/sub1/sub2/sub3/sub4
+	@echo "root file"           > test_lab6/root.txt
+	@echo "sub1 file"           > test_lab6/sub1/a.txt
+	@echo "sub2 file"           > test_lab6/sub1/sub2/b.txt
+	@echo "sub3 file"           > test_lab6/sub1/sub2/sub3/c.txt
+	@echo "sub4 file"           > test_lab6/sub1/sub2/sub3/sub4/d.txt
+	./$(TARGET) -add -key "secret" -image disk.img test_lab6/
+	@echo ""
+	@echo "=== list ==="
+	./$(TARGET) -list -image disk.img
+	@echo ""
+	@echo "=== get root.txt ==="
+	./$(TARGET) -get -key "secret" -image disk.img -out got_root.txt root.txt
+	@cat got_root.txt
+	@echo ""
+	@echo "=== roundtrip check ==="
+	diff test_lab6/root.txt got_root.txt && echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
+
+
+.PHONY: all clean test test4 test_roundtrip test5 test6
