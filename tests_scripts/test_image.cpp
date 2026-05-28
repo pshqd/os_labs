@@ -2,6 +2,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <vector>
+#include "../deps/caesar.h"   // подключаем напрямую чтобы вызвать rc4_encrypt
+
 
 // ============================================================
 //  test_image.cpp — демо-тест образа диска
@@ -140,12 +143,99 @@ int main(int argc, char* argv[]) {
     run_cmd(sc + " -list -image " + img);
 
     // ----------------------------------------------------------
+    // ШАГ 9: создаём "чужой" образ вручную — имитируем другого студента
+    //
+    // Другой студент мог написать программу на другом языке.
+    // Мы сами пишем байты в файл по формату:
+    //   [4 байта file_len][4 байта name_len][16 байт соль][имя][зашифр. данные]
+    // Потом проверяем что наш secure_copy его читает корректно.
+    // ----------------------------------------------------------
+    section("STEP 9: create 'foreign' image manually (simulate another student)");
+
+    // Исходный текст, который "другой студент" зашифровал
+    const char* foreign_plain = "Data from another student!\n";
+    size_t foreign_len = strlen(foreign_plain);
+
+    // Фиксированная соль (другой студент генерировал её у себя — мы знаем её значение)
+    uint8_t foreign_salt[16] = {
+        0x11,0x22,0x33,0x44, 0x55,0x66,0x77,0x88,
+        0x99,0xaa,0xbb,0xcc, 0xdd,0xee,0xff,0x00
+    };
+
+    // Имя файла в образе
+    const char* foreign_name = "foreign.txt";
+    uint32_t foreign_name_len = (uint32_t)strlen(foreign_name);
+    uint32_t foreign_file_len = (uint32_t)foreign_len;
+
+    // Ключ шифрования = master_key + salt (такой же алгоритм как у нас)
+    // master_key = "sharedkey"
+    const char* foreign_master = "sharedkey";
+    std::vector<unsigned char> foreign_rc4key;
+    {
+        size_t mklen = strlen(foreign_master);
+        foreign_rc4key.resize(mklen + 16);
+        memcpy(foreign_rc4key.data(), foreign_master, mklen);
+        memcpy(foreign_rc4key.data() + mklen, foreign_salt, 16);
+    }
+
+    // Шифруем вручную через rc4_encrypt из caesar.h
+    // (та же функция что использует secure_copy)
+    std::vector<unsigned char> foreign_enc(foreign_len);
+    rc4_encrypt(foreign_rc4key.data(), foreign_rc4key.size(),
+                (const unsigned char*)foreign_plain, foreign_enc.data(), foreign_len);
+
+    // Пишем образ вручную — бинарно, байт в байт
+    const char* foreign_img = "/tmp/foreign.img";
+    FILE* fout = fopen(foreign_img, "wb");
+    if (!fout) { perror("foreign.img"); return 1; }
+    fwrite(&foreign_file_len, 4, 1, fout);        // длина содержимого
+    fwrite(&foreign_name_len, 4, 1, fout);        // длина имени
+    fwrite(foreign_salt,      16, 1, fout);       // соль
+    fwrite(foreign_name,      1, foreign_name_len, fout); // имя
+    fwrite(foreign_enc.data(), 1, foreign_len, fout);     // зашифр. данные
+    fclose(fout);
+
+    printf("Foreign image created: %s\n", foreign_img);
+    printf("Plain text was: \"%s\"\n", foreign_plain);
+    printf("Salt (hex): ");
+    for (int i = 0; i < 16; i++) printf("%02x", foreign_salt[i]);
+    printf("\n");
+
+    // Показываем сырые байты — наглядно видна структура
+    run_cmd(std::string("xxd ") + foreign_img);
+
+    // ----------------------------------------------------------
+    // ШАГ 10: расшифровываем "чужой" образ нашим secure_copy
+    // ----------------------------------------------------------
+    section("STEP 10: decrypt 'foreign' image with our secure_copy");
+    run_cmd(sc + " -list -image " + foreign_img);
+    run_cmd(sc + " -get -key \"sharedkey\" -image " + foreign_img +
+            " -out /tmp/foreign_got.txt foreign.txt");
+
+    printf("--- decrypted content ---\n");
+    system("cat /tmp/foreign_got.txt");
+
+    // Пишем ожидаемый файл для diff
+    FILE* fexpect = fopen("/tmp/foreign_expected.txt", "w");
+    fputs(foreign_plain, fexpect);
+    fclose(fexpect);
+
+    int ret_foreign = system("diff /tmp/foreign_expected.txt /tmp/foreign_got.txt > /dev/null 2>&1");
+    pass_fail(ret_foreign, "foreign image interoperability");
+
+    // Чистим
+    remove(foreign_img);
+    remove("/tmp/foreign_got.txt");
+    remove("/tmp/foreign_expected.txt");
+
+    // ----------------------------------------------------------
     // Итог
     // ----------------------------------------------------------
     section("SUMMARY");
     printf("correct key roundtrip  : %s\n", ret_correct == 0 ? "PASSED" : "FAILED");
     printf("wrong key is different : %s\n", ret_wrong   != 0 ? "PASSED" : "BUG");
     printf("binary roundtrip       : %s\n", ret_bin     == 0 ? "PASSED" : "FAILED");
+    printf("foreign image compat   : %s\n", ret_foreign == 0 ? "PASSED" : "FAILED");  // ← новая строка
 
     // Чистим временные файлы
     remove(img);

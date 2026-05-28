@@ -26,7 +26,8 @@ clean:
 	@rm -rf test_out5/ 
 	@rm -f disk.img got_root.txt
 	@rm -rf test_lab6/
-	@rm -rf test_segfault
+	@rm -rf test_big/
+	@rm -f test_segfault
 	@rm -f test_image
 
 
@@ -117,4 +118,30 @@ test_image: tests_scripts/test_image.cpp all
 	$(CXX) $(CXXFLAGS) tests_scripts/test_image.cpp -o test_image $(LDFLAGS)
 	./test_image ./$(TARGET)
 	
-.PHONY: all clean test test4 test_roundtrip test5 test6 test_segfault test_image
+# ── Стресс-тест: 1 ГБ файл × 15 хардлинков, параллельное добавление ────────
+# Запуск: make test_lab6_big
+# Чтобы смотреть память в реальном времени — открой второй терминал и запусти:
+#   watch -n1 'ps -eo pid,comm,rss | grep secure_copy'
+test_lab6_big: all
+	@echo "=== [lab6-big] создаём 1 ГБ файл + 14 хардлинков ==="
+	@mkdir -p test_big
+	dd if=/dev/urandom of=test_big/file1.bin bs=100M count=10 status=progress
+	@for i in 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+	    ln test_big/file1.bin test_big/file$$i.bin; \
+	done
+	@echo ""
+	@echo "=== -add: добавляем test_big/ в disk.img (5 потоков) ==="
+	./$(TARGET) -add -key "123" -image disk.img test_big/
+	@echo ""
+	@echo "=== -list: содержимое disk.img ==="
+	./$(TARGET) -list -image disk.img
+	@echo ""
+	@echo "=== -get: извлекаем file9.bin ==="
+	./$(TARGET) -get -key "123" -image disk.img -out result.bin file9.bin
+	@echo ""
+	@echo "=== cmp: сравниваем с оригиналом ==="
+	cmp result.bin test_big/file1.bin \
+	    && echo "✅ PASSED: расшифровка верна" \
+	    || echo "❌ FAILED: файлы различаются"
+
+.PHONY: all clean test test4 test_roundtrip test5 test6 test_segfault test_image test_lab6_big

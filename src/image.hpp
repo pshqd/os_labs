@@ -25,7 +25,7 @@
 
 // xxd /dev/urandom | head -1 (прикольное)
 static void gen_salt(uint8_t* salt, size_t n) {
-    FILE* f = fopen("/dev/urandom", "rb"); // виртуааальная папка, интерфейс к ядру
+    FILE* f = fopen("/dev/urandom", "rb");
     if (f) {
         fread(salt, 1, n, f);
         fclose(f);

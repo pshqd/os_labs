@@ -23,3 +23,9 @@ test_out5/
 test_lab6/
 *.img
 *.txt
+
+in/
+result_file
+test_image
+test_big/
+*.bin
