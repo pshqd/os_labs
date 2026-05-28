@@ -19,7 +19,7 @@ void caesar(void* src, void* dst, int len) {
 // RC4: внутреннее состояние (S, i, j) живёт только здесь — снаружи недоступно
 void rc4_encrypt(const unsigned char* key_data, size_t key_len,
                  const unsigned char* src, unsigned char* dst, size_t len) {
-    unsigned char S[256];
+    unsigned char S[256]; ///////////пачимуууууу
     // KSA (Key Scheduling Algorithm)
     for (int i = 0; i < 256; i++) S[i] = (unsigned char)i;
     unsigned char j = 0;

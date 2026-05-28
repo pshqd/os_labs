@@ -27,10 +27,9 @@ clean:
 	@rm -f disk.img got_root.txt
 	@rm -rf test_lab6/
 	@rm -rf test_segfault
+	@rm -f test_image
 
 
-# Создаём 5 тестовых файлов и запускаем программу
-# ← changed: добавили --mode=parallel, исправили i=1→i=2 в аргументах
 test3: all
 	mkdir -p test_inputs
 	echo "File one content"   > test_inputs/file1.txt
@@ -38,19 +37,16 @@ test3: all
 	echo "File three content" > test_inputs/file3.txt
 	echo "File four content"  > test_inputs/file4.txt
 	echo "File five content"  > test_inputs/file5.txt
-	./$(TARGET) --mode=parallel \
+	./$(TARGET) -add -key "K" -image disk.img \
 	            test_inputs/file1.txt test_inputs/file2.txt \
 	            test_inputs/file3.txt test_inputs/file4.txt \
-	            test_inputs/file5.txt outdir/ K
+	            test_inputs/file5.txt
 	@echo ""
-	@echo "=== Encrypted files in outdir/ ==="
-	@ls -la outdir/
-	@echo ""
-	@echo "=== log.txt ==="
-	@cat log.txt
+	@echo "=== Files in disk.img ==="
+	./$(TARGET) -list -image disk.img
 
-# тест для ПР4 — 10 файлов, демонстрирует все три режима
-# Запускается на защите: make test4
+
+# test4 — 10 файлов, показываем add + list + get (аналог трёх режимов)
 test4: all
 	mkdir -p test_inputs
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
@@ -58,38 +54,21 @@ test4: all
 	        > test_inputs/file$$i.txt; \
 	done
 	@echo ""
-	@echo "=== sequential mode (10 files) ==="
-	./$(TARGET) --mode=sequential \
+	@echo "=== add 10 files to image ==="
+	./$(TARGET) -add -key "K" -image disk.img \
 	    test_inputs/file1.txt  test_inputs/file2.txt \
 	    test_inputs/file3.txt  test_inputs/file4.txt \
 	    test_inputs/file5.txt  test_inputs/file6.txt \
 	    test_inputs/file7.txt  test_inputs/file8.txt \
-	    test_inputs/file9.txt  test_inputs/file10.txt \
-	    outdir/ K
+	    test_inputs/file9.txt  test_inputs/file10.txt
 	@echo ""
-	@echo "=== parallel mode (10 files) ==="
-	./$(TARGET) --mode=parallel \
-	    test_inputs/file1.txt  test_inputs/file2.txt \
-	    test_inputs/file3.txt  test_inputs/file4.txt \
-	    test_inputs/file5.txt  test_inputs/file6.txt \
-	    test_inputs/file7.txt  test_inputs/file8.txt \
-	    test_inputs/file9.txt  test_inputs/file10.txt \
-	    outdir/ K
+	@echo "=== list image ==="
+	./$(TARGET) -list -image disk.img
 	@echo ""
-	@echo "=== auto mode (10 files — should pick parallel) ==="
-	./$(TARGET) --mode=auto \
-	    test_inputs/file1.txt  test_inputs/file2.txt \
-	    test_inputs/file3.txt  test_inputs/file4.txt \
-	    test_inputs/file5.txt  test_inputs/file6.txt \
-	    test_inputs/file7.txt  test_inputs/file8.txt \
-	    test_inputs/file9.txt  test_inputs/file10.txt \
-	    outdir/ K
-	@echo ""
-	@echo "=== auto mode (3 files — should pick sequential) ==="
-	./$(TARGET) --mode=auto \
-	    test_inputs/file1.txt test_inputs/file2.txt \
-	    test_inputs/file3.txt \
-	    outdir/ K
+	@echo "=== get file1.txt back ==="
+	./$(TARGET) -get -key "K" -image disk.img -out test_inputs/got1.txt file1.txt
+	diff test_inputs/file1.txt test_inputs/got1.txt \
+	    && echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
 
 test_roundtrip: all
 	mkdir -p test_inputs roundtrip_out
@@ -133,5 +112,9 @@ test6: all
 	@echo "=== roundtrip check ==="
 	diff test_lab6/root.txt got_root.txt && echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
 
-
-.PHONY: all clean test test4 test_roundtrip test5 test6 test_segfault
+# Компилируем и запускаем расширенный демо-тест образа
+test_image: tests_scripts/test_image.cpp all
+	$(CXX) $(CXXFLAGS) tests_scripts/test_image.cpp -o test_image $(LDFLAGS)
+	./test_image ./$(TARGET)
+	
+.PHONY: all clean test test4 test_roundtrip test5 test6 test_segfault test_image

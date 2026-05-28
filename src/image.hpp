@@ -222,7 +222,7 @@ inline bool image_get(const std::string& image_path,
         std::vector<unsigned char> enc(file_len);
         if (fread(enc.data(), 1, file_len, f) != file_len) break;
 
-        if (name != file_name) continue;  // не тот файл — идём дальше
+        if (name != file_name) continue;
 
         // Расшифровываем: RC4(ключ, зашифрованное) = исходное
         std::vector<unsigned char> rc4key;
