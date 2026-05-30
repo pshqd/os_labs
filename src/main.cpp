@@ -4,36 +4,23 @@
 #include <cstring>
 #include <pthread.h>
 #include <sys/stat.h>
-#include "image.hpp"   // вся логика образа — здесь
+#include <sys/mman.h>   // mlock/munlock
+#include "image.hpp"
+#include "secure_key.hpp"
 
-// Максимум 5 потоков при добавлении файлов (по заданию)
 static const int MAX_WORKERS = 5;
 
- 
-// AddArgs — структура аргументов для рабочего потока.
-// Такой же подход, как WorkerArgs в предыдущей лабе: всё, что нужно потоку,
-// кладём в одну структуру и передаём через void*.
- 
+// AddArgs — аргументы для рабочего потока (паттерн из прошлой лабы)
 struct AddArgs {
-    std::vector<std::pair<std::string,std::string>>* files;  // список файлов
-    size_t*          index;        // индекс следующего файла для обработки
-    pthread_mutex_t* index_mutex;  // мьютекс на index (чтобы два потока
-                                   // не взяли один и тот же файл)
-    pthread_mutex_t* img_mutex;    // мьютекс на запись в образ
+    std::vector<std::pair<std::string,std::string>>* files;
+    size_t*          index;
+    pthread_mutex_t* index_mutex;
+    pthread_mutex_t* img_mutex;
     std::string      image_path;
     std::string      master_key;
 };
 
- 
-// add_worker — функция рабочего потока для команды -add.
-//
-// Как работает:
-//  Крутится в цикле: берём следующий индекс файла под мьютексом,
-//  вызываем image_add_file и печатаем результат.
-//  Когда файлы закончились (index >= size) — выходим.
-//  Это тот же producer-consumer паттерн, что в worker.hpp прошлой лабы,
-//  только вместо очереди — общий счётчик.
- 
+// add_worker — рабочий поток: берёт файл из общего списка и добавляет в образ
 static void* add_worker(void* arg) {
     auto* a = static_cast<AddArgs*>(arg);
     while (true) {
@@ -53,15 +40,7 @@ static void* add_worker(void* arg) {
     return nullptr;
 }
 
- 
-// cmd_add — реализует команду: ./secure_copy -add -key KEY -image IMG file...
-//
-// Как работает:
-//  1. Для каждого аргумента (файл или директория) собираем полный список
-//     файлов через collect_files (рекурсивно раскрывает директории).
-//  2. Запускаем до MAX_WORKERS потоков — каждый вызывает add_worker.
-//  3. Ждём завершения всех потоков через pthread_join.
- 
+// cmd_add — собирает файлы, запускает потоки, ждёт завершения
 static int cmd_add(const std::string& key, const std::string& image,
                    const std::vector<std::string>& inputs) {
     std::vector<std::pair<std::string,std::string>> all_files;
@@ -105,18 +84,10 @@ static int cmd_add(const std::string& key, const std::string& image,
     return 0;
 }
 
- 
-// main — точка входа, разбирает аргументы и вызывает нужную команду.
-//
-// Поддерживаемые команды:
-//   -add  -key KEY -image IMG file1 [file2 dir1 ...]
-//   -list -image IMG
-//   -get  -key KEY -image IMG -out OUT_FILE FILE_NAME
-//
-// Разбор аргументов: идём по argv, ищем флаги -key/-image/-out,
-// всё остальное складываем в вектор inputs (имена файлов/директорий).
- 
 int main(int argc, char* argv[]) {
+    // Сразу ставим обработчик segfault — до любых операций
+    install_sigsegv_handler();
+
     if (argc < 2) {
         fprintf(stderr,
             "Usage:\n"
@@ -140,21 +111,40 @@ int main(int argc, char* argv[]) {
 
     if (image.empty()) { fprintf(stderr, "Error: -image is required\n"); return 1; }
 
+    // SecureKey — RAII-обёртка вокруг ключа (затирает при разрушении)
+    // Передаём весь ключ как строку, а не только первый символ
+    SecureKey sk(key.empty() ? '\0' : key[0]);
+
+    // Блокируем страницу с ключом в RAM — чтобы ОС не сбросила её в swap-файл
+    // Делаем ПОСЛЕ того как строка сформирована и больше не изменяется
+    if (!key.empty())
+        mlock(key.data(), key.size());
+
+    int result = 1;
+
     if (mode == "-add") {
-        if (key.empty())    { fprintf(stderr, "Error: -key is required\n");         return 1; }
-        if (inputs.empty()) { fprintf(stderr, "Error: no input files/dirs\n");      return 1; }
-        return cmd_add(key, image, inputs);
+        if (key.empty())    { fprintf(stderr, "Error: -key is required\n");        goto cleanup; }
+        if (inputs.empty()) { fprintf(stderr, "Error: no input files/dirs\n");     goto cleanup; }
+        result = cmd_add(key, image, inputs);
     }
-    if (mode == "-list") {
-        return image_list(image) ? 0 : 1;
+    else if (mode == "-list") {
+        result = image_list(image) ? 0 : 1;
     }
-    if (mode == "-get") {
-        if (key.empty())      { fprintf(stderr, "Error: -key is required\n");       return 1; }
-        if (out_file.empty()) { fprintf(stderr, "Error: -out is required\n");       return 1; }
-        if (inputs.empty())   { fprintf(stderr, "Error: file name is required\n");  return 1; }
-        return image_get(image, key, inputs[0], out_file) ? 0 : 1;
+    else if (mode == "-get") {
+        if (key.empty())      { fprintf(stderr, "Error: -key is required\n");      goto cleanup; }
+        if (out_file.empty()) { fprintf(stderr, "Error: -out is required\n");      goto cleanup; }
+        if (inputs.empty())   { fprintf(stderr, "Error: file name is required\n"); goto cleanup; }
+        result = image_get(image, key, inputs[0], out_file) ? 0 : 1;
+    }
+    else {
+        fprintf(stderr, "Unknown command: %s\n", mode.c_str());
     }
 
-    fprintf(stderr, "Unknown command: %s\n", mode.c_str());
-    return 1;
+cleanup:
+    // Затираем ключ из памяти и разблокируем страницу — ВСЕГДА, при любом исходе
+    if (!key.empty()) {
+        memset(key.data(), 0, key.size());
+        munlock(key.data(), key.size());
+    }
+    return result;
 }
