@@ -72,11 +72,12 @@ test4: all
 	    && echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
 
 test_roundtrip: all
-	mkdir -p test_inputs roundtrip_out
+	mkdir -p test_inputs
+	@rm -f roundtrip.img
 	echo "Hello roundtrip" > test_inputs/roundtrip.txt
-	./$(TARGET) --mode=sequential test_inputs/roundtrip.txt outdir/ K
-	./$(TARGET) --mode=sequential outdir/roundtrip.txt roundtrip_out/ K
-	diff test_inputs/roundtrip.txt roundtrip_out/roundtrip.txt \
+	./$(TARGET) -add -key "K" -image roundtrip.img test_inputs/roundtrip.txt
+	./$(TARGET) -get -key "K" -image roundtrip.img -out test_inputs/got_roundtrip.txt roundtrip.txt
+	diff test_inputs/roundtrip.txt test_inputs/got_roundtrip.txt \
 		&& echo "ROUNDTRIP PASSED" || echo "ROUNDTRIP FAILED"
 
 test_segfault: tests_scripts/test_segfault.cpp

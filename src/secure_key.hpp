@@ -6,7 +6,9 @@
 #include <cstdlib>
 #include <unistd.h>  
 
-static const size_t KEY_MEM_SIZE = 16;
+static const size_t KEY_MEM_SIZE = 4096;
+size_t key_len = 0;
+
 
 // ── SIGSEGV обработчик ──────────────────────────────────────────────────────
 static void sigsegv_handler(int, siginfo_t* /*info*/, void*) { 
@@ -32,26 +34,26 @@ static void install_sigsegv_handler() {
 struct SecureKey {
     void* ptr = MAP_FAILED;
 
-    // 1. Выделяем страницу (RW) и копируем ключ
-    explicit SecureKey(char key) {
+    explicit SecureKey(const std::string& key) {
         ptr = mmap(nullptr, KEY_MEM_SIZE,
-                   PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (ptr == MAP_FAILED) {
-            perror("mmap");
-            exit(1);
-        }
-        // mprotect #1 — явно подтверждаем RW перед записью (задание требует
-        // минимум 3 вызовов mprotect)
-        mprotect(ptr, KEY_MEM_SIZE, PROT_READ | PROT_WRITE);
-        memcpy(ptr, &key, 1);                    // копируем 1 байт ключа
-        memset((char*)ptr + 1, 0, KEY_MEM_SIZE - 1); // остаток — нули
-
-        // mprotect #2 — переводим в read-only, ключ защищён
-        mprotect(ptr, KEY_MEM_SIZE, PROT_READ);
+                   PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (ptr == MAP_FAILED) { perror("mmap"); exit(1); }
+        mprotect(ptr, KEY_MEM_SIZE, PROT_READ | PROT_WRITE); // #1
+        key_len = std::min(key.size(), KEY_MEM_SIZE - 1);
+        memcpy(ptr, key.data(), key_len);
+        memset((char*)ptr + key_len, 0, KEY_MEM_SIZE - key_len);
+        mprotect(ptr, KEY_MEM_SIZE, PROT_READ);               // #2
         printf("[secure_key] Key stored at %p, memory locked to PROT_READ\n", ptr);
     }
 
+    explicit SecureKey(char key) : SecureKey(std::string(1, key)) {}
+
+    std::string get_str() const {
+        mprotect(ptr, KEY_MEM_SIZE, PROT_READ | PROT_WRITE); // #3
+        std::string result(reinterpret_cast<char*>(ptr), key_len);
+        mprotect(ptr, KEY_MEM_SIZE, PROT_READ);
+        return result;
+    }
     // 2. Получить ключ — временно RW, скопировать в локальную переменную, обратно RO
     char get() const {
         // mprotect #3 — открываем на чтение (уже RO, но копирование в
