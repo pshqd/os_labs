@@ -1,184 +1,181 @@
-# OS Labs — Многопоточное шифрование файлов
+# secure_copy — Файловый образ с RC4-шифрованием
 
-Цикл из трёх практических работ по системному программированию на C++.
-Каждая работа расширяет предыдущую: от простой библиотеки — к многопоточному
-копировщику с синхронизацией.
+Цикл лабораторных работ по системному программированию на C++.
+Финальный результат: утилита `secure_copy` — создаёт бинарный образ диска,
+хранит произвольные файлы с RC4-шифрованием, поддерживает рекурсивные
+директории и параллельную обработку через пул потоков.
 
 ---
 
-## Работа 1 — Библиотека шифрования libcaesar
-
-**Цель:** создать динамическую библиотеку `libcaesar.so` с XOR-шифрованием.
-
-### Интерфейс
-
-```c++
-void set_key(char key);                          // установить ключ шифрования
-void caesar(const char* src, char* dst, int n);  // зашифровать n байт
-```
-
-XOR-шифрование обратимо: повторное применение с тем же ключом расшифровывает данные.
-
-```text
-"Hello" XOR 'K' → зашифровано → XOR 'K' → "Hello"
-```
-
-### Сборка
+## Быстрый старт
 
 ```bash
-make          # собрать libcaesar.so
-make install  # скопировать в deps/
-make test     # запустить тесты через test_caesar.py
-```
+make
 
-### Файлы
+# Добавить файлы / директорию в образ
+./secure_copy -add -key "mypassword" -image disk.img src/ file.txt
 
-```text
-caesar.cpp        — реализация set_key() и caesar()
-caesar.h          — заголовочный файл библиотеки
-Makefile          — сборка .so, установка, тесты
-test_caesar.py    — автотесты на Python
+# Посмотреть содержимое образа
+./secure_copy -list -image disk.img
+
+# Извлечь файл
+./secure_copy -get -key "mypassword" -image disk.img -out out.txt sub/file.txt
 ```
 
 ---
 
-## Работа 2 — Файловый копировщик с шифрованием
+## Команды
 
-**Цель:** на основе `libcaesar.so` написать `secure_copy` —
-программу которая копирует файл с шифрованием через два потока.
-
-### Архитектура: Producer / Consumer
-
-```text
-Producer поток              Consumer поток
-──────────────              ──────────────
-читает файл блоками    →    шифрует блоки
-кладёт в BoundedBuffer →    пишет в файл
-```
-
-`BoundedBuffer` — кольцевая очередь блоков с синхронизацией
-через `pthread_mutex_t` + `pthread_cond_t`.
-Если буфер полон — producer ждёт. Если пуст — consumer ждёт.
-
-При нажатии Ctrl+C флаг `keep_running = 0` останавливает producer.
-Consumer дочитывает оставшееся из буфера и завершается штатно.
-
-### Запуск
-
-```bash
-./secure_copy input.txt output.txt K
-```
-
-### Файлы
-
-```text
-src/main.cpp           — точка входа, SIGINT, запуск потоков
-src/bounded_buffer.hpp — потокобезопасный кольцевой буфер
-src/producer.hpp       — поток чтения файла
-src/consumer.hpp       — поток шифрования и записи
-deps/libcaesar.so      — библиотека из Работы 1
-```
-
----
-
-## Работа 3 — Защита от конфликтов при одновременном копировании
-
-**Цель:** расширить `secure_copy` для обработки N файлов параллельно
-через три рабочих потока с мьютексной синхронизацией и логированием.
-
-### Архитектура: Worker Pool
-
-```text
-[file1, file2, file3, file4, file5]  ← общая очередь
-          ↓         ↓         ↓
-       worker-0  worker-1  worker-2
-       читает    читает    читает
-       шифрует   шифрует   шифрует
-       пишет     пишет     пишет
-```
-
-Воркеры берут файлы из очереди динамически — кто освободился, тот и берёт следующий.
-
-### Запуск
-
-```bash
-./secure_copy file1.txt file2.txt file3.txt outdir/ K
-make test     # запуск на 5 файлах автоматически
-```
-
-### Синхронизация
-
-Единственный `pthread_mutex_t` защищает три критические секции:
-
-| Операция | Зачем мьютекс |
+| Команда | Описание |
 |---|---|
-| `next_file()` | два воркера не должны получить один файл |
-| `increment_copied()` | `copied_++` не атомарна без защиты |
-| `log()` | два потока не пишут в файл одновременно |
+| `-add -key K -image IMG paths...` | Добавить файлы или директории в образ |
+| `-list -image IMG` | Показать содержимое образа |
+| `-get -key K -image IMG -out OUT name` | Извлечь и расшифровать файл |
 
-Мьютекс удерживается только на короткие операции.
-Тяжёлое (чтение, шифрование, запись) — вне мьютекса, параллельно.
+**`-key`** — произвольная строка (не ограничена одним символом).  
+**`paths...`** — любое количество файлов и директорий; директории обходятся рекурсивно.  
+**`name`** — относительное имя файла внутри образа (например, `sub1/a.txt`).
 
-### Обнаружение дедлоков
+---
 
-```cpp
-int rc = mutex_timedlock(&mutex_, 5);
-if (rc == ETIMEDOUT) {
-    fprintf(stderr, "Possible deadlock: thread %lu waiting > 5s\n", ...);
-    return "";
-}
+## Формат образа
+
+Образ — плоский бинарный файл, записи следуют последовательно:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  4 байта : file_len  (размер зашифрованного содержимого) │
+│  4 байта : name_len  (длина имени)                       │
+│  16 байт : salt      (случайная соль /dev/urandom)       │
+│  name_len байт : имя файла                               │
+│  file_len байт : зашифрованное содержимое                │
+└──────────────────────────────────────────────────────────┘
+       ↑ повторяется для каждого файла
 ```
 
-На macOS `pthread_mutex_timedlock` недоступен — эмулируется через
-`pthread_mutex_trylock` + `nanosleep` в `mutex_utils.hpp`.
+Для каждого файла генерируется уникальная соль.  
+RC4-ключ = `master_key + salt` → одинаковый пароль даёт разный шифртекст.
 
-### Логирование
+---
 
-```text
-[2026-04-16 10:40:17] thread=6157021184 file=test_inputs/file1.txt status=OK time=0.001s
+## Архитектура
+
+### Шифрование (Лаба 1 + 6)
+
+```
+caesar.cpp / caesar.h
+  ├── set_key(char)      — XOR-шифр (лаба 1, совместимость)
+  ├── caesar(src,dst,n)  — XOR побайтово
+  └── rc4_encrypt(key, key_len, src, dst, n)  — RC4 (добавлен в лабе 6)
 ```
 
-Файл `log.txt` открывается в режиме `append` — повторные запуски
-дописывают строки, не удаляя предыдущие.
+RC4 симметричен: `encrypt(encrypt(data)) == data`, поэтому расшифровка = шифрование.
 
-### Файлы
+### Защита ключа (Лаба 5)
 
-```text
-src/main.cpp           — точка входа, 3 потока, pthread_join
-src/worker.hpp         — полный цикл воркера: читать→шифровать→писать
-src/file_queue.hpp     — потокобезопасная очередь + счётчик
-src/logger.hpp         — запись в log.txt с временной меткой
-src/mutex_utils.hpp    — эмуляция timedlock для macOS
-deps/libcaesar.so      — библиотека из Работы 1
+```
+src/secure_key.hpp — SecureKey
+  ├── mmap(PROT_READ|PROT_WRITE)  — выделяем страницу
+  ├── memcpy(ptr, key)             — копируем строку ключа
+  ├── mprotect(PROT_READ)          — делаем read-only
+  ├── get_str() → mprotect(RW) → copy → mprotect(RO)
+  └── ~SecureKey() → memset(0) → munmap()
+```
+
+При попытке записи в защищённую страницу — `SIGSEGV` → обработчик печатает
+`[SECURITY] Unauthorized access detected` и завершается с кодом `42`.
+
+### Батчевая обработка (Лаба 4 + 6)
+
+```
+src/file_queue.hpp — FileQueue
+  ├── next_file()         — атомарно берёт следующий файл (timedlock 5 с)
+  ├── increment_copied()  — счётчик успешных записей
+  └── get_copied()        — итоговый результат
+```
+
+`cmd_add` кодирует пары `(real_path, name_in_image)` как строки
+`"real|name"` и кладёт в `FileQueue`. До 5 потоков параллельно разбирают
+очередь — каждый сам берёт следующую задачу без централизованного
+распределения (work-stealing).
+
+```
+FileQueue [file1|name1, file2|name2, ...]
+              ↓          ↓          ↓
+           worker-0   worker-1   worker-2   worker-3   worker-4
+           get_str()  get_str()  get_str()  ...
+           rc4_enc    rc4_enc    rc4_enc
+           img_write  img_write  img_write   ← под img_mutex
+```
+
+Дедлок-защита: `mutex_timedlock(5 сек)` — если поток ждёт дольше,
+выводится предупреждение и поток завершается штатно.
+
+---
+
+## Файловая структура
+
+```
+.
+├── caesar.cpp / caesar.h        — libcaesar.so: XOR + RC4
+├── src/
+│   ├── main.cpp                 — точка входа, парсинг -add/-list/-get
+│   ├── image.hpp                — формат образа: add / list / get
+│   ├── secure_key.hpp           — RAII-обёртка mmap+mprotect для ключа
+│   ├── file_queue.hpp           — потокобезопасная очередь файлов
+│   ├── worker.hpp               — воркер для старого XOR-режима
+│   ├── sequential.hpp           — последовательная обработка (легаси)
+│   ├── logger.hpp               — запись в log.txt с временными метками
+│   ├── mutex_utils.hpp          — timedlock-эмуляция для macOS
+│   └── stats.hpp                — сбор статистики по файлам
+├── deps/
+│   └── libcaesar.so             — скомпилированная библиотека
+├── tests_scripts/
+│   ├── test_image.cpp           — интеграционный тест образа
+│   └── test_segfault.cpp        — демо SIGSEGV-защиты ключа
+└── Makefile
 ```
 
 ---
 
-## Эволюция архитектуры
-
-```text
-Работа 1          Работа 2              Работа 3
-────────          ────────              ────────
-libcaesar.so  →   Producer            [очередь файлов]
-set_key()         BoundedBuffer   →      worker-0
-caesar()          Consumer               worker-1
-                  1 файл                 worker-2
-                  2 потока               мьютекс
-                                         log.txt
-                                         N файлов
-                                         3 потока
-```
-
-## Сборка
+## Сборка и тесты
 
 ```bash
-make          # собрать secure_copy
-make test     # создать 5 файлов и запустить
-make clean    # удалить бинарник, log.txt, outdir/
+make                  # сборка secure_copy
+
+make test3            # 5 файлов: -add + -list
+make test4            # 10 файлов: -add + -list + -get с roundtrip
+make test_roundtrip   # минимальный roundtrip: add → get → diff
+make test5            # SecureKey + SIGSEGV-демо (ожидаем exit 42)
+make test6            # рекурсивная директория + get + roundtrip
+make test_image       # полный интеграционный тест (7 шагов)
+make test_lab6_big    # стресс: 1 ГБ × 15 файлов, 5 потоков
+
+make clean            # удалить бинарники, disk.img, временные файлы
+```
+
+> **Важно:** перед повторным запуском теста удали образ вручную  
+> (`rm -f disk.img`) или добавь `make clean` — иначе старые записи  
+> накапливаются и `-list` покажет дубликаты.
+
+---
+
+## Эволюция по лабам
+
+```
+Лаба 1        Лаба 2         Лаба 3          Лаба 4/5/6
+──────        ──────         ──────          ──────────────
+libcaesar  →  Producer    →  Worker pool  →  FileQueue (batch)
+XOR            BoundedBuf     3 потока        SecureKey (mmap)
+set_key()      Consumer       mutex           RC4 + соль
+               1 файл         log.txt         образ диска
+               2 потока        N файлов        5 потоков
+                                               рекурсия
 ```
 
 ## Зависимости
 
 - `g++` с поддержкой C++17
-- `libcaesar.so` (собирается из `caesar.cpp`)
 - POSIX threads (`-pthread`)
+- `libcaesar.so` (собирается из `caesar.cpp`)
+- macOS / Linux (timedlock эмулируется на macOS через `trylock` + `nanosleep`)
